@@ -71,7 +71,7 @@ QUERY_4_HQL = """UNCACHE TABLE url_counts_partial;
                  DROP TABLE IF EXISTS url_counts_partial;
                  CREATE TABLE url_counts_partial AS
                    SELECT TRANSFORM (line)
-                   USING "python /root/url_count.py" as (sourcePage,
+                   USING "python /home/admin/url_count.py" as (sourcePage,
                      destPage, count) from documents;
                  DROP TABLE IF EXISTS url_counts_total;
                  CREATE TABLE url_counts_total AS
@@ -303,8 +303,8 @@ def scp_from(host, identity_file, username, remote_file, local_file):
 
 def run_spark_benchmark(opts):
   def ssh_spark(command):
-    command = "source /root/.bash_profile; %s" % command
-    ssh(opts.spark_host, "root", opts.spark_identity_file, command)
+    command = "source /home/admin/.bash_profile; %s" % command
+    ssh(opts.spark_host, "admin", opts.spark_identity_file, command)
 
   local_clean_query = CLEAN_QUERY
   local_query_map = QUERY_MAP
@@ -317,7 +317,7 @@ def run_spark_benchmark(opts):
   remote_tmp_file = "/mnt/%s_out" % prefix
   remote_query_file = "/mnt/%s" % query_file_name
 
-  runner = "/root/spark/bin/beeline -u jdbc:hive2://localhost:10000 -n root"
+  runner = "/home/admin/spark/bin/beeline -u jdbc:hive2://localhost:10000 -n admin"
 
   # Two modes here: Spark SQL Mem and Spark SQL Disk. If using Spark SQL disk use
   # uncached tables. If using Spark SQL Mem, used cached tables.
@@ -342,7 +342,7 @@ def run_spark_benchmark(opts):
 
   if opts.clear_buffer_cache:
     print "Writing command to clear buffer cache"
-    query_file.write("/root/ephemeral-hdfs/sbin/slaves.sh /root/spark-ec2/clear-cache.sh\n")
+    query_file.write("/home/admin/ephemeral-hdfs/sbin/slaves.sh sudo /home/admin/spark-ec2/clear-cache.sh\n")
 
   query_file.write(
     "%s %s > %s 2>&1\n" % (runner, " ".join("-e '%s'" % q.strip() for q in query_list.split(";") if q.strip()), remote_tmp_file))
@@ -354,7 +354,7 @@ def run_spark_benchmark(opts):
   query_file.close()
 
   print "Copying files to Spark"
-  scp_to(opts.spark_host, opts.spark_identity_file, "root", local_query_file,
+  scp_to(opts.spark_host, opts.spark_identity_file, "admin", local_query_file,
       remote_query_file)
   ssh_spark("chmod 775 %s" % remote_query_file)
 
@@ -369,7 +369,7 @@ def run_spark_benchmark(opts):
     print "Query %s : Trial %i" % (opts.query_num, i+1)
     ssh_spark("%s" % remote_query_file)
     local_results_file = os.path.join(LOCAL_TMP_DIR, "%s_results" % prefix)
-    scp_from(opts.spark_host, opts.spark_identity_file, "root",
+    scp_from(opts.spark_host, opts.spark_identity_file, "admin",
         "/mnt/%s_results" % prefix, local_results_file)
     content = open(local_results_file).readlines()
     all_times = [float(x.split("(")[1].split(" ")[0]) for x in content]
@@ -401,8 +401,8 @@ def run_spark_benchmark(opts):
 
 def run_shark_benchmark(opts):
   def ssh_shark(command):
-    command = "source /root/.bash_profile; %s" % command
-    ssh(opts.shark_host, "root", opts.shark_identity_file, command)
+    command = "source /home/admin/.bash_profile; %s" % command
+    ssh(opts.shark_host, "admin", opts.shark_identity_file, command)
 
   local_clean_query = CLEAN_QUERY
   local_query_map = QUERY_MAP
@@ -415,7 +415,7 @@ def run_shark_benchmark(opts):
   remote_tmp_file = "/mnt/%s_out" % prefix
   remote_query_file = "/mnt/%s" % query_file_name
 
-  runner = "export SPARK_MEM=%s; /root/shark/bin/shark" % opts.shark_mem
+  runner = "export SPARK_MEM=%s; /home/admin/shark/bin/shark" % opts.shark_mem
 
   # Two modes here: Shark Mem and Shark Disk. If using Shark disk clear buffer
   # cache in-between each query. If using Shark Mem, used cached tables.
@@ -464,7 +464,7 @@ def run_shark_benchmark(opts):
   print query_list.replace(';', ";\n")
 
   if opts.clear_buffer_cache:
-    query_file.write("python /root/shark/bin/dev/clear-buffer-cache.py\n")
+    query_file.write("python /home/admin/shark/bin/dev/clear-buffer-cache.py\n")
 
   query_file.write(
     "%s -e '%s' > %s 2>&1\n" % (runner, query_list, remote_tmp_file))
@@ -476,7 +476,7 @@ def run_shark_benchmark(opts):
   query_file.close()
 
   print "Copying files to Shark"
-  scp_to(opts.shark_host, opts.shark_identity_file, "root", local_query_file,
+  scp_to(opts.shark_host, opts.shark_identity_file, "admin", local_query_file,
       remote_query_file)
   ssh_shark("chmod 775 %s" % remote_query_file)
 
@@ -491,7 +491,7 @@ def run_shark_benchmark(opts):
     print "Query %s : Trial %i" % (opts.query_num, i+1)
     ssh_shark("%s" % remote_query_file)
     local_results_file = os.path.join(LOCAL_TMP_DIR, "%s_results" % prefix)
-    scp_from(opts.shark_host, opts.shark_identity_file, "root",
+    scp_from(opts.shark_host, opts.shark_identity_file, "admin",
         "/mnt/%s_results" % prefix, local_results_file)
     content = open(local_results_file).readlines()
     all_times = map(lambda x: float(x.split(": ")[1].split(" ")[0]), content)
@@ -629,14 +629,14 @@ def run_redshift_benchmark(opts):
   return times
 
 def run_hive_benchmark(opts):
-  def ssh_hive(command, user="root"):
+  def ssh_hive(command, user="admin"):
     command = 'sudo -u %s %s' % (user, command)
     print command
-    ssh(opts.hive_host, "root", opts.hive_identity_file, command)
+    ssh(opts.hive_host, "admin", opts.hive_identity_file, command)
 
   def clear_buffer_cache_hive(host):
     print >> stderr, "Clearing", host
-    ssh(host, "root", opts.hive_identity_file,
+    ssh(host, "admin", opts.hive_identity_file,
         "sudo bash -c \"sync && echo 3 > /proc/sys/vm/drop_caches\"")
 
   prefix = str(time.time()).split(".")[0]
@@ -665,7 +665,7 @@ def run_hive_benchmark(opts):
     # HADOOP_USER_CLASSPATH_FIRST=true \
     # HADOOP_USER_NAME=hive \
     # /opt/apache-hive-0.13.0.2.1.0.0-92-bin/bin/hive \
-      # -i /root/benchmark/runner/tez/Stinger-Preview-Quickstart/configs/stinger.settings \
+      # -i /home/admin/benchmark/runner/tez/Stinger-Preview-Quickstart/configs/stinger.settings \
       # -hiveconf hive.optimize.tez=true
     # """
 
@@ -702,7 +702,7 @@ def run_hive_benchmark(opts):
   query_file.close()
 
   print "Copying query files to Hive host"
-  scp_to(opts.hive_host, opts.hive_identity_file, "root", local_query_file,
+  scp_to(opts.hive_host, opts.hive_identity_file, "admin", local_query_file,
       remote_query_file)
   ssh_hive("chmod 775 %s" % remote_query_file)
 
@@ -720,7 +720,7 @@ def run_hive_benchmark(opts):
       map(clear_buffer_cache_hive, opts.hive_slaves)
     ssh_hive("%s" % remote_query_file)
     local_results_file = os.path.join(LOCAL_TMP_DIR, "%s_results" % prefix)
-    scp_from(opts.hive_host, opts.hive_identity_file, "root",
+    scp_from(opts.hive_host, opts.hive_identity_file, "admin",
         "/mnt/%s_results" % prefix, local_results_file)
     content = open(local_results_file).readlines()
     all_times = map(lambda x: float(x.split(": ")[1].split(" ")[0]), content)
@@ -871,12 +871,12 @@ def ensure_spark_stopped_on_slaves(slaves):
   stop = False
   while not stop:
     cmd = "jps | grep ExecutorBackend"
-    ret_vals = map(lambda s: ssh_ret_code(s, "root", opts.spark_identity_file, cmd), slaves)
+    ret_vals = map(lambda s: ssh_ret_code(s, "admin", opts.spark_identity_file, cmd), slaves)
     print ret_vals
     if 0 in ret_vals:
       print "Spark is still running on some slaves... sleeping"
       cmd = "jps | grep ExecutorBackend | cut -d \" \" -f 1 | xargs -rn1 kill -9"
-      map(lambda s: ssh_ret_code(s, "root", opts.spark_identity_file, cmd), slaves)
+      map(lambda s: ssh_ret_code(s, "admin", opts.spark_identity_file, cmd), slaves)
       time.sleep(2)
     else:
       stop = True
@@ -885,12 +885,12 @@ def ensure_shark_stopped_on_slaves(slaves):
   stop = False
   while not stop:
     cmd = "jps | grep ExecutorBackend"
-    ret_vals = map(lambda s: ssh_ret_code(s, "root", opts.shark_identity_file, cmd), slaves)
+    ret_vals = map(lambda s: ssh_ret_code(s, "admin", opts.shark_identity_file, cmd), slaves)
     print ret_vals
     if 0 in ret_vals:
       print "Spark is still running on some slaves... sleeping"
       cmd = "jps | grep ExecutorBackend | cut -d \" \" -f 1 | xargs -rn1 kill -9"
-      map(lambda s: ssh_ret_code(s, "root", opts.shark_identity_file, cmd), slaves)
+      map(lambda s: ssh_ret_code(s, "admin", opts.shark_identity_file, cmd), slaves)
       time.sleep(2)
     else:
       stop = True

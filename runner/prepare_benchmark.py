@@ -209,47 +209,47 @@ def add_aws_credentials(remote_host, remote_user, identity_file,
 
 def prepare_spark_dataset(opts):
   def ssh_spark(command):
-    command = "source /root/.bash_profile; %s" % command
-    ssh(opts.spark_host, "root", opts.spark_identity_file, command)
+    command = "source /home/admin/.bash_profile; %s" % command
+    ssh(opts.spark_host, "admin", opts.spark_identity_file, command)
 
   if not opts.skip_s3_import:
     print "=== IMPORTING BENCHMARK DATA FROM S3 ==="
     try:
-      ssh_spark("/root/ephemeral-hdfs/bin/hadoop fs -mkdir /user/spark/benchmark")
+      ssh_spark("/home/admin/ephemeral-hdfs/bin/hadoop fs -mkdir hdfs://localhost/user/spark/benchmark")
     except Exception:
       pass # Folder may already exist
 
-    add_aws_credentials(opts.spark_host, "root", opts.spark_identity_file,
-        "/root/mapreduce/conf/core-site.xml", opts.aws_key_id, opts.aws_key)
+    add_aws_credentials(opts.spark_host, "admin", opts.spark_identity_file,
+        "/home/admin/ephemeral-hdfs/etc/hadoop/core-site.xml", opts.aws_key_id, opts.aws_key)
 
-    ssh_spark("/root/ephemeral-hdfs/bin/start-mapred.sh")
+    ssh_spark("/home/admin/ephemeral-hdfs/sbin/start-yarn.sh")
 
     ssh_spark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/mapred distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/rankings/ " \
-      "/user/spark/benchmark/rankings/" % (opts.file_format, opts.data_prefix))
+      "hdfs://localhost/user/spark/benchmark/rankings/" % (opts.file_format, opts.data_prefix))
 
     ssh_spark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/mapred distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/uservisits/ " \
-      "/user/spark/benchmark/uservisits/" % (
+      "hdfs://localhost/user/spark/benchmark/uservisits/" % (
         opts.file_format, opts.data_prefix))
 
     ssh_spark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/mapred distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/crawl/ " \
-      "/user/spark/benchmark/crawl/" % (opts.file_format, opts.data_prefix))
+      "hdfs://localhost/user/spark/benchmark/crawl/" % (opts.file_format, opts.data_prefix))
 
   print "=== CREATING HIVE TABLES FOR BENCHMARK ==="
   hive_site = '''
     <configuration>
       <property>
         <name>fs.default.name</name>
-        <value>hdfs://NAMENODE:9000</value>
+        <value>hdfs://NAMENODE:8020</value>
       </property>
       <property>
         <name>fs.defaultFS</name>
-        <value>hdfs://NAMENODE:9000</value>
+        <value>hdfs://NAMENODE:8020</value>
       </property>
       <property>
         <name>mapred.job.tracker</name>
@@ -262,21 +262,21 @@ def prepare_spark_dataset(opts):
     </configuration>
     '''.replace("NAMENODE", opts.spark_host).replace('\n', '')
 
-  ssh_spark('echo "%s" > ~/ephemeral-hdfs/conf/hive-site.xml' % hive_site)
+  ssh_spark('echo "%s" > ~/ephemeral-hdfs/etc/hadoop/hive-site.xml' % hive_site)
 
-  scp_to(opts.spark_host, opts.spark_identity_file, "root", "udf/url_count.py",
-      "/root/url_count.py")
-  ssh_spark("/root/spark-ec2/copy-dir /root/url_count.py")
+  scp_to(opts.spark_host, opts.spark_identity_file, "admin", "udf/url_count.py",
+      "/home/admin/url_count.py")
+  ssh_spark("/home/admin/spark-ec2/copy-dir /home/admin/url_count.py")
 
-  ssh_spark("/root/spark/sbin/stop-thriftserver.sh")
-  ssh_spark("/root/spark/sbin/start-thriftserver.sh")
+  ssh_spark("/home/admin/spark/sbin/stop-thriftserver.sh")
+  ssh_spark("/home/admin/spark/sbin/start-thriftserver.sh --deploy-mode cluster --master spark://ec2-13-58-112-206.us-east-2.compute.amazonaws.com:7077")
 
   #TODO: Should keep checking to see if the JDBC server has started yet
   print "Sleeping for 30 seconds so the jdbc server can start"
   time.sleep(30)
 
   def beeline(query):
-    ssh_spark("/root/spark/bin/beeline -u jdbc:hive2://localhost:10000 -n root -e \"%s\"" % query)
+    ssh_spark("/home/admin/spark/bin/beeline -u jdbc:hive2://localhost:10000 -n admin -e \"%s\"" % query)
 
   file_format = opts.file_format
   hiveql_format = FILE_FORMAT_TO_HIVEQL_FORMAT[file_format]
@@ -291,7 +291,7 @@ def prepare_spark_dataset(opts):
   beeline(
     "CREATE EXTERNAL TABLE rankings (pageURL STRING, pageRank INT, avgDuration INT) " +
     row_format +
-    "STORED AS %s LOCATION \\\"/user/spark/benchmark/rankings\\\";" % hiveql_format)
+    "STORED AS %s LOCATION \\\"hdfs://localhost/user/spark/benchmark/rankings\\\";" % hiveql_format)
 
   beeline("DROP TABLE IF EXISTS uservisits;")
   beeline(
@@ -299,30 +299,30 @@ def prepare_spark_dataset(opts):
     "visitDate STRING,adRevenue DOUBLE,userAgent STRING,countryCode STRING," +
     "languageCode STRING,searchWord STRING,duration INT )" +
     row_format +
-    "STORED AS %s LOCATION \\\"/user/spark/benchmark/uservisits\\\";" % hiveql_format)
+    "STORED AS %s LOCATION \\\"hdfs://localhost/user/spark/benchmark/uservisits\\\";" % hiveql_format)
 
   beeline("DROP TABLE IF EXISTS documents;")
   beeline(
     "CREATE EXTERNAL TABLE documents (line STRING) STORED AS %s " \
-    "LOCATION \\\"/user/spark/benchmark/crawl\\\";" % hiveql_format)
+    "LOCATION \\\"hdfs://localhost/user/spark/benchmark/crawl\\\";" % hiveql_format)
 
   if opts.parquet:
     if (not opts.skip_parquet_conversion):
       print "Converting benchmark data to parquet"
-      ssh_spark("/root/spark/sbin/stop-thriftserver.sh")
+      ssh_spark("/home/admin/spark/sbin/stop-thriftserver.sh")
       print "Sleeping for 30 seconds so the jdbc server can stop"
       time.sleep(30)
 
       scp_to(
         opts.spark_host, opts.spark_identity_file,
-        "root",
+        "admin",
         "parquet/convert_to_parquet.py",
-        "/root/convert_to_parquet.py")
+        "/home/admin/convert_to_parquet.py")
       ssh_spark(
-        "/root/spark/bin/spark-submit --master spark://%s:7077 /root/convert_to_parquet.py" %
+        "/home/admin/spark/bin/spark-submit --master spark://%s:7077 /home/admin/convert_to_parquet.py" %
         opts.spark_host)
 
-      ssh_spark("/root/spark/sbin/start-thriftserver.sh")
+      ssh_spark("/home/admin/spark/sbin/start-thriftserver.sh  --deploy-mode cluster --master spark://ec2-13-58-112-206.us-east-2.compute.amazonaws.com:7077")
       print "Sleeping for 30 seconds so the jdbc server can start"
       time.sleep(30)
 
@@ -330,7 +330,7 @@ def prepare_spark_dataset(opts):
     beeline(
       "CREATE EXTERNAL TABLE rankings (pageURL STRING, pageRank INT, " \
       "avgDuration INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY \\\",\\\" " \
-      "STORED AS PARQUET LOCATION \\\"/user/spark/benchmark/rankings-parquet\\\";")
+      "STORED AS PARQUET LOCATION \\\"hdfs://localhost/user/spark/benchmark/rankings-parquet\\\";")
 
     beeline("DROP TABLE IF EXISTS uservisits;")
     beeline(
@@ -338,51 +338,51 @@ def prepare_spark_dataset(opts):
       "visitDate STRING,adRevenue DOUBLE,userAgent STRING,countryCode STRING," \
       "languageCode STRING,searchWord STRING,duration INT ) " \
       "ROW FORMAT DELIMITED FIELDS TERMINATED BY \\\",\\\" " \
-      "STORED AS PARQUET LOCATION \\\"/user/spark/benchmark/uservisits-parquet\\\";")
+      "STORED AS PARQUET LOCATION \\\"hdfs://localhost/user/spark/benchmark/uservisits-parquet\\\";")
 
     beeline("DROP TABLE IF EXISTS documents;")
     beeline(
       "CREATE EXTERNAL TABLE documents (line STRING) STORED AS PARQUET " \
-      "LOCATION \\\"/user/spark/benchmark/documents-parquet\\\";")
+      "LOCATION \\\"hdfs://localhost/user/spark/benchmark/documents-parquet\\\";")
 
   print "=== FINISHED CREATING BENCHMARK DATA ==="
 
 def prepare_shark_dataset(opts):
   def ssh_shark(command):
-    command = "source /root/.bash_profile; %s" % command
-    ssh(opts.shark_host, "root", opts.shark_identity_file, command)
+    command = "source /home/admin/.bash_profile; %s" % command
+    ssh(opts.shark_host, "admin", opts.shark_identity_file, command)
 
   if not opts.skip_s3_import:
     print "=== IMPORTING BENCHMARK DATA FROM S3 ==="
     try:
-      ssh_shark("/root/ephemeral-hdfs/bin/hadoop fs -mkdir /user/shark/benchmark")
+      ssh_shark("/home/admin/ephemeral-hdfs/bin/hadoop fs -mkdir /user/shark/benchmark")
     except Exception:
       pass # Folder may already exist
 
-    add_aws_credentials(opts.shark_host, "root", opts.shark_identity_file,
-        "/root/ephemeral-hdfs/conf/core-site.xml", opts.aws_key_id, opts.aws_key)
+    add_aws_credentials(opts.shark_host, "admin", opts.shark_identity_file,
+        "/home/admin/ephemeral-hdfs/conf/core-site.xml", opts.aws_key_id, opts.aws_key)
 
-    ssh_shark("/root/ephemeral-hdfs/bin/start-mapred.sh")
+    ssh_shark("/home/admin/ephemeral-hdfs/bin/start-mapred.sh")
 
     ssh_shark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/hadoop distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/rankings/ " \
       "/user/shark/benchmark/rankings/" % (opts.file_format, opts.data_prefix))
 
     ssh_shark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/hadoop distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/uservisits/ " \
       "/user/shark/benchmark/uservisits/" % (
         opts.file_format, opts.data_prefix))
 
     ssh_shark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp " \
+      "/home/admin/ephemeral-hdfs/bin/hadoop distcp " \
       "s3n://big-data-benchmark/pavlo/%s/%s/crawl/ " \
       "/user/shark/benchmark/crawl/" % (opts.file_format, opts.data_prefix))
 
     # Scratch table used for JVM warmup
     ssh_shark(
-      "/root/ephemeral-hdfs/bin/hadoop distcp /user/shark/benchmark/rankings " \
+      "/home/admin/ephemeral-hdfs/bin/hadoop distcp /user/shark/benchmark/rankings " \
       "/user/shark/benchmark/scratch"
     )
 
@@ -408,34 +408,34 @@ def prepare_shark_dataset(opts):
     </configuration>
     '''.replace("NAMENODE", opts.shark_host).replace('\n', '')
 
-  ssh_shark('echo "%s" > ~/ephemeral-hdfs/conf/hive-site.xml' % hive_site)
+  ssh_shark('echo "%s" > ~/ephemeral-hdfs/etc/hadoop/hive-site.xml' % hive_site)
 
-  scp_to(opts.shark_host, opts.shark_identity_file, "root", "udf/url_count.py",
-      "/root/url_count.py")
-  ssh_shark("/root/spark-ec2/copy-dir /root/url_count.py")
+  scp_to(opts.shark_host, opts.shark_identity_file, "admin", "udf/url_count.py",
+      "/home/admin/url_count.py")
+  ssh_shark("/home/admin/spark-ec2/copy-dir /home/admin/url_count.py")
 
   file_format = FILE_FORMAT_TO_HIVEQL_FORMAT[opts.file_format]
   ssh_shark(
-    "/root/shark/bin/shark -e \"DROP TABLE IF EXISTS rankings; " \
+    "/home/admin/shark/bin/shark -e \"DROP TABLE IF EXISTS rankings; " \
     "CREATE EXTERNAL TABLE rankings (pageURL STRING, pageRank INT, " \
     "avgDuration INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY \\\",\\\" " \
     "STORED AS %s LOCATION \\\"/user/shark/benchmark/rankings\\\";\"" % file_format)
 
   ssh_shark(
-    "/root/shark/bin/shark -e \"DROP TABLE IF EXISTS scratch; " \
+    "/home/admin/shark/bin/shark -e \"DROP TABLE IF EXISTS scratch; " \
     "CREATE EXTERNAL TABLE scratch (pageURL STRING, pageRank INT, " \
     "avgDuration INT) ROW FORMAT DELIMITED FIELDS TERMINATED BY \\\",\\\" " \
     "STORED AS %s LOCATION \\\"/user/shark/benchmark/scratch\\\";\"" % file_format)
 
   ssh_shark(
-    "/root/shark/bin/shark -e \"DROP TABLE IF EXISTS uservisits; " \
+    "/home/admin/shark/bin/shark -e \"DROP TABLE IF EXISTS uservisits; " \
     "CREATE EXTERNAL TABLE uservisits (sourceIP STRING,destURL STRING," \
     "visitDate STRING,adRevenue DOUBLE,userAgent STRING,countryCode STRING," \
     "languageCode STRING,searchWord STRING,duration INT ) " \
     "ROW FORMAT DELIMITED FIELDS TERMINATED BY \\\",\\\" " \
     "STORED AS %s LOCATION \\\"/user/shark/benchmark/uservisits\\\";\"" % file_format)
 
-  ssh_shark("/root/shark/bin/shark -e \"DROP TABLE IF EXISTS documents; " \
+  ssh_shark("/home/admin/shark/bin/shark -e \"DROP TABLE IF EXISTS documents; " \
     "CREATE EXTERNAL TABLE documents (line STRING) STORED AS %s " \
     "LOCATION \\\"/user/shark/benchmark/crawl\\\";\"" % file_format)
 
@@ -498,9 +498,9 @@ def prepare_impala_dataset(opts):
   print "=== FINISHED CREATING BENCHMARK DATA ==="
 
 def prepare_hive_dataset(opts):
-  def ssh_hive(command, user="root"):
+  def ssh_hive(command, user="admin"):
     command = 'sudo -u %s %s' % (user, command)
-    ssh(opts.hive_host, "root", opts.hive_identity_file, command)
+    ssh(opts.hive_host, "admin", opts.hive_identity_file, command)
 
   if not opts.skip_s3_import:
     print "=== IMPORTING BENCHMARK FROM S3 ==="
@@ -532,10 +532,10 @@ def prepare_hive_dataset(opts):
     ssh_hive(cp_crawl, user='hdfs')
 
   print "=== CREATING HIVE TABLES FOR BENCHMARK ==="
-  scp_to(opts.hive_host, opts.hive_identity_file, "root", "udf/url_count.py",
+  scp_to(opts.hive_host, opts.hive_identity_file, "admin", "udf/url_count.py",
       "/tmp/url_count.py")
   for slave in opts.hive_slaves.replace('"', '').split(","):
-    scp_to(slave, opts.hive_identity_file, "root", "udf/url_count.py",
+    scp_to(slave, opts.hive_identity_file, "admin", "udf/url_count.py",
         "/tmp/url_count.py")
 
   mkdir = "hadoop dfs -mkdir /tmp/benchmark/scratch"
